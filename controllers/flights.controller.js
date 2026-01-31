@@ -41,19 +41,6 @@ export async function searchFlights(req, res) {
   }
 }
 
-import FlightStatus from "../models/FlightStatus.js";
-import { ok, bad } from "../utils/response.js";
 
-// GET /api/flights/status/:bookingId
-export async function getFlightStatus(req, res) {
-  try {
-    const { bookingId } = req.params;
 
-    const status = await FlightStatus.findOne({ booking: bookingId });
-    if (!status) return bad(res, "Flight status not found");
 
-    return ok(res, { status }, "Flight status fetched");
-  } catch (err) {
-    return bad(res, err.message || "Failed to fetch flight status");
-  }
-}
