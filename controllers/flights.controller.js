@@ -1,130 +1,42 @@
-import crypto from "crypto";
-import FlightCache from "../models/FlightCache.js";
-import { aviationstackFlights } from "../config/aviationstack.js";
-import { bad, ok } from "../utils/response.js";
+// backend/controllers/flights.controller.js
+import { ok, bad } from "../utils/response.js";
+import { aviationstackSearchFlights } from "../config/aviationstack.js"; // adjust if your function name differs
+import { buildCabinPrices } from "../utils/priceEngine.js";
 
-// create a stable cache key from query
-function makeKey(obj) {
-  const json = JSON.stringify(obj, Object.keys(obj).sort());
-  return crypto.createHash("sha256").update(json).digest("hex");
-}
-
-// Normalize AviationStack response into your app-friendly shape
-function normalizeFlights(apiData) {
-  const rows = Array.isArray(apiData?.data) ? apiData.data : [];
-
-  return rows.map((f) => ({
-    provider: "aviationstack",
-    flight_date: f?.flight_date,
-    flight_status: f?.flight_status,
-
-    airline: {
-      name: f?.airline?.name,
-      iata: f?.airline?.iata,
-      icao: f?.airline?.icao
-    },
-
-    flight: {
-      number: f?.flight?.number,
-      iata: f?.flight?.iata,
-      icao: f?.flight?.icao
-    },
-
-    departure: {
-      airport: f?.departure?.airport,
-      iata: f?.departure?.iata,
-      icao: f?.departure?.icao,
-      scheduled: f?.departure?.scheduled,
-      estimated: f?.departure?.estimated,
-      terminal: f?.departure?.terminal,
-      gate: f?.departure?.gate
-    },
-
-    arrival: {
-      airport: f?.arrival?.airport,
-      iata: f?.arrival?.iata,
-      icao: f?.arrival?.icao,
-      scheduled: f?.arrival?.scheduled,
-      estimated: f?.arrival?.estimated,
-      terminal: f?.arrival?.terminal,
-      gate: f?.arrival?.gate
-    },
-
-    live: f?.live || null,
-    raw: f
-  }));
-}
-
-/**
- * GET /api/flights/search?depIata=MAA&arrIata=DEL&date=2026-02-10&limit=50
- * AviationStack expects access_key + optional filters. flight_date format YYYY-MM-DD. :contentReference[oaicite:3]{index=3}
- */
+// GET /api/flights/search?depIata=MAA&arrIata=DEL&date=2026-01-31&limit=20
 export async function searchFlights(req, res) {
   try {
-    const { depIata, arrIata, date, airlineIata, flightNumber, flightIata, limit } = req.query;
+    const { depIata, arrIata, date, limit = 20 } = req.query;
 
-    if (!depIata || !arrIata) return bad(res, "depIata and arrIata are required (IATA codes)");
-    // date is optional for realtime; recommended for historical/basic plans
-    const query = {
-      dep_iata: depIata,
-      arr_iata: arrIata,
-      ...(date ? { flight_date: date } : {}),
-      ...(airlineIata ? { airline_iata: airlineIata } : {}),
-      ...(flightNumber ? { flight_number: flightNumber } : {}),
-      ...(flightIata ? { flight_iata: flightIata } : {}),
-      limit: Math.min(Number(limit || 50), 100)
-    };
+    if (!depIata || !arrIata) return bad(res, "depIata and arrIata are required");
 
-    const key = makeKey(query);
+    // ✅ call aviationstack (your existing config wrapper)
+    const data = await aviationstackSearchFlights({
+      depIata: String(depIata).toUpperCase(),
+      arrIata: String(arrIata).toUpperCase(),
+      date,
+      limit: Number(limit) || 20,
+    });
 
-    // try cache (5 mins)
-    const cached = await FlightCache.findOne({ key });
-    if (cached && cached.expiresAt > new Date()) {
-      return ok(res, { fromCache: true, results: cached.data.results }, "Flights fetched (cache)");
-    }
+    // data.results should be aviationstack flights array in your project
+    const results = (data?.results || []).map((f) => {
+      const airlineIata = f?.airline?.iata || "DEFAULT";
 
-    const apiData = await aviationstackFlights(query);
-    const results = normalizeFlights(apiData);
+      // optional distanceKm if you compute elsewhere; leaving undefined uses fallback
+      const pricing = buildCabinPrices({ airlineIata, date });
 
-    await FlightCache.findOneAndUpdate(
-      { key },
-      {
-        key,
-        query,
-        data: { results },
-        expiresAt: new Date(Date.now() + 5 * 60 * 1000)
-      },
-      { upsert: true, new: true }
-    );
+      // normalize output (keep your original flight)
+      return {
+        ...f,
+        pricing, // { cabins: [{class,price}...], minPrice, currency }
+      };
+    });
 
-    return ok(res, { fromCache: false, results }, "Flights fetched");
+    // You can sort cheapest by default
+    results.sort((a, b) => (a.pricing?.minPrice || 0) - (b.pricing?.minPrice || 0));
+
+    return ok(res, { results }, "Flights fetched");
   } catch (err) {
-    // AviationStack returns error object with code/message on failures. :contentReference[oaicite:4]{index=4}
-    return bad(res, "Flight search failed", { error: err?.response?.data || err.message });
-  }
-}
-
-/**
- * GET /api/flights/status?flightIata=AI202
- * Uses /v1/flights filters (flight_iata / flight_number etc.) :contentReference[oaicite:5]{index=5}
- */
-export async function getFlightStatus(req, res) {
-  try {
-    const { flightIata, flightNumber, date } = req.query;
-    if (!flightIata && !flightNumber) return bad(res, "flightIata or flightNumber required");
-
-    const query = {
-      ...(date ? { flight_date: date } : {}),
-      ...(flightIata ? { flight_iata: flightIata } : {}),
-      ...(flightNumber ? { flight_number: flightNumber } : {}),
-      limit: 10
-    };
-
-    const apiData = await aviationstackFlights(query);
-    const results = normalizeFlights(apiData);
-
-    return ok(res, { results }, "Flight status fetched");
-  } catch (err) {
-    return bad(res, "Flight status fetch failed", { error: err?.response?.data || err.message });
+    return bad(res, err.message || "Flight search failed");
   }
 }
