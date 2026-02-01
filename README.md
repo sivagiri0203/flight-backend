@@ -327,18 +327,6 @@ Ensure you use same KEY_SECRET in backend
 
 Verify payload fields are correct
 
-✅ License
-MIT
-
-yaml
-Copy code
-
----
-
-If you want, paste your current `index.js` and I’ll tailor the README commands (start scripts + cron startup) to match your exact file.
-::contentReference[oaicite:0]{index=0}
-
-
 
 
 
