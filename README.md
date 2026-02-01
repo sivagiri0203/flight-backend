@@ -258,8 +258,8 @@ If you set these in .env:
 
 env
 Copy code
-ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=Admin@123
+ADMIN_EMAIL=mastersivagiri@gmail.com
+ADMIN_PASSWORD=8940203844
 Backend can auto-create admin on first run (if implemented).
 
 Admin APIs
